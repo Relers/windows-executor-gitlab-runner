@@ -1,0 +1,55 @@
+# Example ci for dotnet project and gitlab-releases feature
+# dotnet build -c Release -f net6.0 --runtime win-x64 --self-contained=true dotnet6_playground.csproj
+# dotnet build -c Release -f net6.0 --runtime linux-x64 --self-contained=false dotnet6_playground.csproj
+# dotnet build -c Release -f net6.0 --runtime osx.12-arm64 --self-contained=false dotnet6_playground.csproj
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/release/${CI_COMMIT_TAG}"
+  WINDOWS_AMD64_BINARY: "cool-windows-amd64-${CI_COMMIT_TAG}.zip"
+  # LINUX_AMD64_BINARY: "cool-linux-amd64-${CI_COMMIT_TAG}"
+
+stages:
+  - build
+  - upload
+  - release
+
+building:
+  stage: build
+  image: gitlab.example.com/library/builder:0.1
+  tags:
+    - docker_win_builder
+  script:
+    - dotnet publish --configuration Release --framework netcoreapp3.1 -o ./publish
+    - Compress-Archive -Path ./publish/* -DestinationPath publish/${WINDOWS_AMD64_BINARY}
+  rules:
+    - if: $CI_COMMIT_TAG
+  artifacts:
+    paths:
+      - publish/${WINDOWS_AMD64_BINARY}
+
+upload:
+  stage: upload
+  image: curlimages/curl:latest
+  tags:
+    - docker_linux_builder
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file publish/${WINDOWS_AMD64_BINARY} "${PACKAGE_REGISTRY_URL}/${WINDOWS_AMD64_BINARY}"
+    # - |
+    #   curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file bin/${LINUX_AMD64_BINARY} "${PACKAGE_REGISTRY_URL}/${LINUX_AMD64_BINARY}"
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  tags:
+    - docker_linux_builder
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      release-cli create --name "Release $CI_COMMIT_TAG" --tag-name $CI_COMMIT_TAG \
+        --assets-link "{\"name\":\"${WINDOWS_AMD64_BINARY}\",\"url\":\"${PACKAGE_REGISTRY_URL}/${WINDOWS_AMD64_BINARY}\"}"
+#      \  --assets-link "{\"name\":\"${LINUX_AMD64_BINARY}\",\"url\":\"${PACKAGE_REGISTRY_URL}/${LINUX_AMD64_BINARY}\"}"
